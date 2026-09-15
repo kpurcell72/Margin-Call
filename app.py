@@ -3,10 +3,11 @@ import pandas as pd
 from datetime import datetime, timezone
 import os
 from supabase import create_client, Client
+from fetch_nfl import fetch_and_store_tuesday_lines
 
 # Page Setup
-st.set_page_config(page_title="Margin Five NFL", layout="wide")
-st.title("🏈 Margin Five NFL Contest")
+st.set_page_config(page_title="Margin Call NFL", layout="wide")
+st.title("🏈 Margin Call NFL Contest")
 
 # Connect to Supabase
 @st.cache_resource
@@ -16,6 +17,19 @@ def init_supabase():
     return create_client(url, key)
 
 supabase = init_supabase()
+
+# Admin Sync Controls in Sidebar
+with st.sidebar:
+    st.header("⚙️ Admin Controls")
+    sync_week = st.number_input("Select Week to Fetch:", min_value=1, max_value=18, value=1)
+    if st.button("🔄 Fetch & Sync Spreads"):
+        with st.spinner(f"Fetching Week {sync_week} spreads..."):
+            try:
+                fetch_and_store_tuesday_lines(week_num=int(sync_week))
+                st.success(f"Week {sync_week} games & spreads loaded!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error syncing games: {e}")
 
 # Navigation Tabs
 tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])
@@ -30,7 +44,7 @@ with tab1:
     games = games_resp.data
 
     if not games:
-        st.info("No games loaded yet for this week.")
+        st.info("No games loaded yet for this week. Use the Admin Controls in the sidebar to sync games.")
     else:
         st.subheader("Pick 5 Games (Each game locks at kickoff)")
         selected_picks = {}
@@ -52,7 +66,7 @@ with tab1:
                 st.warning("🔒 Locked (Game Started)")
             else:
                 choice = st.radio(
-                    f"Select pick for Game ID {game['id']}:",
+                    f"Select pick for {game['away_team']} @ {game['home_team']}:",
                     ["None", a_label, h_label],
                     key=game['id']
                 )

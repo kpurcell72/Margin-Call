@@ -21,9 +21,20 @@ supabase = init_supabase()
 # Define Eastern Time Zone
 EASTERN_TZ = ZoneInfo("America/New_York")
 
-# Initialize active week in session state
+# Query Supabase for the latest week loaded in the database
+def get_latest_synced_week():
+    try:
+        resp = supabase.table("games").select("week").order("week", desc=True).limit(1).execute()
+        if resp.data:
+            return int(resp.data[0]["week"])
+    except Exception:
+        pass
+    return 1
+
+# Initialize active week dynamically from Supabase
+latest_week = get_latest_synced_week()
 if "active_week" not in st.session_state:
-    st.session_state.active_week = 1
+    st.session_state.active_week = latest_week
 
 # Password-Protected Admin Sync Controls in Sidebar
 with st.sidebar:
@@ -64,7 +75,7 @@ with tab1:
         "Select Contest Week:", 
         min_value=1, 
         max_value=18, 
-        value=st.session_state.active_week,
+        value=latest_week,
         key="main_contest_week_input"
     )
 
@@ -120,12 +131,10 @@ with tab1:
             if is_locked:
                 if saved_pick:
                     st.warning(f"🔒 Locked (Game Started) — **Your Pick: {saved_pick}**")
-                    # Preserve locked pick in submission batch
                     selected_picks[game['id']] = saved_pick
                 else:
                     st.warning("🔒 Locked (Game Started — No Pick Submitted)")
             else:
-                # Determine default radio selection index based on existing pick
                 default_idx = 0
                 if saved_pick == game['away_team']:
                     default_idx = 1
@@ -175,11 +184,9 @@ with tab2:
                 game = game_match.iloc[0]
                 picked = row['picked_team']
                 
-                # Retrieve scores (defaulting to 0 if null)
                 home_score = game.get('home_score') or 0
                 away_score = game.get('away_score') or 0
                 
-                # Determine team spread and score relative to user pick
                 if picked == game['home_team']:
                     picked_score = home_score
                     opp_score = away_score
@@ -192,7 +199,6 @@ with tab2:
                 status = str(game.get('status', '')).lower()
                 has_started = status in ['in_progress', 'completed', 'closed', 'final', 'live'] or (home_score > 0 or away_score > 0)
                 
-                # Point calculation: (Picked Team Score - Opponent Score) + Tuesday Spread
                 pts = (picked_score - opp_score) + spread if has_started else 0.0
                 
                 detailed_scores.append({
@@ -207,7 +213,6 @@ with tab2:
         if detailed_scores:
             score_df = pd.DataFrame(detailed_scores)
             
-            # Aggregate pure total margin points per user
             user_summary = []
             for user, group in score_df.groupby("User"):
                 started_picks = group[group["Has Started"]]
@@ -221,7 +226,6 @@ with tab2:
             leaderboard = pd.DataFrame(user_summary)
             leaderboard = leaderboard.sort_values(by="Total Margin Points", ascending=False).reset_index(drop=True)
             
-            # 1-based Ranking index
             leaderboard.index = leaderboard.index + 1
             leaderboard = leaderboard.reset_index().rename(columns={"index": "Rank"})
 

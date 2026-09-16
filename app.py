@@ -25,25 +25,33 @@ EASTERN_TZ = ZoneInfo("America/New_York")
 if "active_week" not in st.session_state:
     st.session_state.active_week = 1
 
-# Admin Sync Controls in Sidebar
+# Password-Protected Admin Sync Controls in Sidebar
 with st.sidebar:
     st.header("⚙️ Admin Controls")
-    sync_week = st.number_input(
-        "Select Week to Fetch:", 
-        min_value=1, 
-        max_value=18, 
-        value=st.session_state.active_week,
-        key="sidebar_sync_week_input"
-    )
-    if st.button("🔄 Fetch & Sync Spreads", key="sidebar_sync_btn"):
-        with st.spinner(f"Fetching Week {sync_week} spreads..."):
-            try:
-                fetch_and_store_tuesday_lines(week_num=int(sync_week))
-                st.session_state.active_week = int(sync_week)
-                st.success(f"Week {sync_week} games & spreads loaded!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error syncing games: {e}")
+    admin_key = st.text_input("Enter Admin Password:", type="password", key="admin_pwd_input")
+    
+    if admin_key == st.secrets.get("ADMIN_PASSWORD", ""):
+        st.success("Admin Access Granted")
+        sync_week = st.number_input(
+            "Select Week to Fetch:", 
+            min_value=1, 
+            max_value=18, 
+            value=st.session_state.active_week,
+            key="sidebar_sync_week_input"
+        )
+        if st.button("🔄 Fetch & Sync Spreads", key="sidebar_sync_btn"):
+            with st.spinner(f"Fetching Week {sync_week} spreads..."):
+                try:
+                    fetch_and_store_tuesday_lines(week_num=int(sync_week))
+                    st.session_state.active_week = int(sync_week)
+                    st.success(f"Week {sync_week} games & spreads loaded!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error syncing games: {e}")
+    elif admin_key:
+        st.error("Incorrect Password")
+    else:
+        st.info("Enter admin password to unlock fetch controls.")
 
 # Navigation Tabs
 tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])

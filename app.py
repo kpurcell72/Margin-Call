@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone
-import os
-from supabase import create_client, Client
+from supabase import create_client
 from fetch_nfl import fetch_and_store_tuesday_lines
 
-# Page Setup
 st.set_page_config(page_title="Margin Call NFL", layout="wide")
 st.title("🏈 Margin Call NFL Contest")
 
@@ -18,18 +16,39 @@ def init_supabase():
 
 supabase = init_supabase()
 
+# Initialize active week in session state
+if "active_week" not in st.session_state:
+    st.session_state.active_week = 1
+
 # Admin Sync Controls in Sidebar
 with st.sidebar:
     st.header("⚙️ Admin Controls")
-    sync_week = st.number_input("Select Week to Fetch:", min_value=1, max_value=18, value=1)
+    sync_week = st.number_input("Select Week to Fetch:", min_value=1, max_value=18, value=st.session_state.active_week)
     if st.button("🔄 Fetch & Sync Spreads"):
         with st.spinner(f"Fetching Week {sync_week} spreads..."):
             try:
                 fetch_and_store_tuesday_lines(week_num=int(sync_week))
+                st.session_state.active_week = int(sync_week)  # Automatically update display week
                 st.success(f"Week {sync_week} games & spreads loaded!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error syncing games: {e}")
+
+# Navigation Tabs
+tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])
+
+with tab1:
+    st.header("Weekly Picks Selection")
+    user_name = st.text_input("Enter Your Name / Identifier:")
+    
+    # Linked week selector
+    week = st.number_input(
+        "Select Contest Week:", 
+        min_value=1, 
+        max_value=18, 
+        value=st.session_state.active_week,
+        key="contest_week_input"
+    )
 
 # Navigation Tabs
 tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])

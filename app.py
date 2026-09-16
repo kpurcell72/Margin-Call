@@ -281,6 +281,7 @@ with tab2:
     if picks_resp.data and not games_df.empty:
         picks_df = pd.DataFrame(picks_resp.data)
         detailed_scores = []
+        now_utc = datetime.now(timezone.utc)
 
         for _, row in picks_df.iterrows():
             game_match = games_df[games_df['id'] == row['game_id']]
@@ -288,6 +289,14 @@ with tab2:
                 game = game_match.iloc[0]
                 picked = row['picked_team']
                 
+                # Check kickoff time vs current time
+                kickoff_utc = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
+                status = str(game.get('status', '')).lower()
+                has_started = now_utc >= kickoff_utc or status in ['in_progress', 'completed', 'closed', 'final', 'live']
+                
+                # Mask pick if game has not kicked off yet
+                display_pick = picked if has_started else "🔒 Hidden until Kickoff"
+
                 home_score = game.get('home_score') or 0
                 away_score = game.get('away_score') or 0
                 
@@ -300,16 +309,13 @@ with tab2:
                     opp_score = home_score
                     spread = -game['tuesday_spread']
                 
-                status = str(game.get('status', '')).lower()
-                has_started = status in ['in_progress', 'completed', 'closed', 'final', 'live'] or (home_score > 0 or away_score > 0)
-                
                 pts = (picked_score - opp_score) + spread if has_started else 0.0
                 
                 detailed_scores.append({
                     "User": row['user_name'],
                     "Week": row['week'],
-                    "Picked": picked,
-                    "Status": status.capitalize() if status else "Scheduled",
+                    "Picked": display_pick,
+                    "Status": "Live / Final" if has_started else "Scheduled",
                     "Margin Pts": float(pts),
                     "Has Started": has_started
                 })
@@ -340,7 +346,7 @@ with tab2:
                     "Total Margin Points": st.column_config.NumberColumn(
                         "Total Margin Points",
                         format="%+.1f",
-                        help="Sum of margin points won/lost across selected games."
+                        help="Sum of margin points won/lost across selected games that have kicked off."
                     )
                 },
                 hide_index=True,
@@ -348,7 +354,16 @@ with tab2:
             )
             
             st.subheader("📋 Pick Breakdown")
-            display_breakdown = score_df[["User", "Week", "Picked", "Status", "Margin Pts"]].copy()
+            
+            # Filter breakdown by week
+            available_weeks = sorted(score_df["Week"].unique())
+            filter_week = st.selectbox("Filter Breakdown by Week:", ["All Weeks"] + list(available_weeks), key="lb_week_filter")
+            
+            if filter_week != "All Weeks":
+                display_breakdown = score_df[score_df["Week"] == filter_week][["User", "Week", "Picked", "Status", "Margin Pts"]].copy()
+            else:
+                display_breakdown = score_df[["User", "Week", "Picked", "Status", "Margin Pts"]].copy()
+
             st.dataframe(
                 display_breakdown,
                 column_config={

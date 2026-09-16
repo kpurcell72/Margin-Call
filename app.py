@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from supabase import create_client
 from fetch_nfl import fetch_and_store_tuesday_lines
 
+# Page Setup
 st.set_page_config(page_title="Margin Call NFL", layout="wide")
 st.title("🏈 Margin Call NFL Contest")
 
@@ -23,12 +24,18 @@ if "active_week" not in st.session_state:
 # Admin Sync Controls in Sidebar
 with st.sidebar:
     st.header("⚙️ Admin Controls")
-    sync_week = st.number_input("Select Week to Fetch:", min_value=1, max_value=18, value=st.session_state.active_week)
-    if st.button("🔄 Fetch & Sync Spreads"):
+    sync_week = st.number_input(
+        "Select Week to Fetch:", 
+        min_value=1, 
+        max_value=18, 
+        value=st.session_state.active_week,
+        key="sidebar_sync_week_input"
+    )
+    if st.button("🔄 Fetch & Sync Spreads", key="sidebar_sync_btn"):
         with st.spinner(f"Fetching Week {sync_week} spreads..."):
             try:
                 fetch_and_store_tuesday_lines(week_num=int(sync_week))
-                st.session_state.active_week = int(sync_week)  # Automatically update display week
+                st.session_state.active_week = int(sync_week)
                 st.success(f"Week {sync_week} games & spreads loaded!")
                 st.rerun()
             except Exception as e:
@@ -39,31 +46,22 @@ tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])
 
 with tab1:
     st.header("Weekly Picks Selection")
-    user_name = st.text_input("Enter Your Name / Identifier:")
+    user_name = st.text_input("Enter Your Name / Identifier:", key="user_name_input")
     
-    # Linked week selector
     week = st.number_input(
         "Select Contest Week:", 
         min_value=1, 
         max_value=18, 
         value=st.session_state.active_week,
-        key="contest_week_input"
+        key="main_contest_week_input"
     )
-
-# Navigation Tabs
-tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])
-
-with tab1:
-    st.header("Weekly Picks Selection")
-    user_name = st.text_input("Enter Your Name / Identifier:")
-    week = st.number_input("Select Contest Week:", min_value=1, max_value=18, value=1)
 
     # Fetch Games from Database
     games_resp = supabase.table("games").select("*").eq("week", week).execute()
     games = games_resp.data
 
     if not games:
-        st.info("No games loaded yet for this week. Use the Admin Controls in the sidebar to sync games.")
+        st.info(f"No games loaded yet for Week {week}. Use the Admin Controls in the sidebar to sync games.")
     else:
         st.subheader("Pick 5 Games (Each game locks at kickoff)")
         selected_picks = {}
@@ -87,14 +85,14 @@ with tab1:
                 choice = st.radio(
                     f"Select pick for {game['away_team']} @ {game['home_team']}:",
                     ["None", a_label, h_label],
-                    key=game['id']
+                    key=f"pick_game_{game['id']}"
                 )
                 if choice != "None":
                     picked_team = game['home_team'] if choice == h_label else game['away_team']
                     selected_picks[game['id']] = picked_team
             st.divider()
 
-        if st.button("Submit Picks"):
+        if st.button("Submit Picks", key="submit_picks_btn"):
             if not user_name:
                 st.error("Please enter your name.")
             elif len(selected_picks) != 5:
@@ -112,45 +110,46 @@ with tab1:
 with tab2:
     st.header("Live Scoreboard & Standings")
 
-    # Load Picks & Games
     picks_resp = supabase.table("picks").select("*").execute()
     games_df = pd.DataFrame(supabase.table("games").select("*").execute().data)
 
     if picks_resp.data and not games_df.empty:
         picks_df = pd.DataFrame(picks_resp.data)
         
-        # Calculate Score per Pick
         scores = []
         for _, row in picks_df.iterrows():
-            game = games_df[games_df['id'] == row['game_id']].iloc[0]
-            picked = row['picked_team']
-            
-            if picked == game['home_team']:
-                picked_score = game['home_score']
-                opp_score = game['away_score']
-                spread = game['tuesday_spread']
-            else:
-                picked_score = game['away_score']
-                opp_score = game['home_score']
-                spread = -game['tuesday_spread']
+            game_match = games_df[games_df['id'] == row['game_id']]
+            if not game_match.empty:
+                game = game_match.iloc[0]
+                picked = row['picked_team']
                 
-            pts = (picked_score - opp_score) + spread
-            scores.append({
-                "User": row['user_name'],
-                "Week": row['week'],
-                "Picked": picked,
-                "Status": game['status'],
-                "Margin Pts": pts
-            })
+                if picked == game['home_team']:
+                    picked_score = game['home_score']
+                    opp_score = game['away_score']
+                    spread = game['tuesday_spread']
+                else:
+                    picked_score = game['away_score']
+                    opp_score = game['home_score']
+                    spread = -game['tuesday_spread']
+                    
+                pts = (picked_score - opp_score) + spread
+                scores.append({
+                    "User": row['user_name'],
+                    "Week": row['week'],
+                    "Picked": picked,
+                    "Status": game['status'],
+                    "Margin Pts": pts
+                })
             
-        score_df = pd.DataFrame(scores)
-        
-        # Leaderboard Summary
-        leaderboard = score_df.groupby("User")["Margin Pts"].sum().reset_index()
-        leaderboard = leaderboard.sort_values(by="Margin Pts", ascending=False)
-        
-        st.dataframe(leaderboard, use_container_width=True)
-        st.subheader("Detailed Breakdown")
-        st.dataframe(score_df, use_container_width=True)
+        if scores:
+            score_df = pd.DataFrame(scores)
+            leaderboard = score_df.groupby("User")["Margin Pts"].sum().reset_index()
+            leaderboard = leaderboard.sort_values(by="Margin Pts", ascending=False)
+            
+            st.dataframe(leaderboard, use_container_width=True)
+            st.subheader("Detailed Breakdown")
+            st.dataframe(score_df, use_container_width=True)
+        else:
+            st.info("No matching game records found for picks.")
     else:
         st.info("No picks or game scores to display yet.")

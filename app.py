@@ -18,7 +18,7 @@ st.markdown("""
         text-align: left;
     }
     </style>
-""", unsafe_html=True)
+""", unsafe_allow_html=True)
 
 st.title("🏈 Margin Call NFL Contest")
 

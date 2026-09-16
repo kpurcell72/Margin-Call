@@ -21,6 +21,50 @@ supabase = init_supabase()
 # Define Eastern Time Zone
 EASTERN_TZ = ZoneInfo("America/New_York")
 
+# NFL Team Logo Mapping (ESPN CDN)
+TEAM_LOGOS = {
+    "Arizona Cardinals": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+    "Atlanta Falcons": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+    "Baltimore Ravens": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+    "Buffalo Bills": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+    "Carolina Panthers": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+    "Chicago Bears": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+    "Cincinnati Bengals": "https://a.espncdn.com/i/teamlogos/nfl/500/cin.png",
+    "Cleveland Browns": "https://a.espncdn.com/i/teamlogos/nfl/500/cle.png",
+    "Dallas Cowboys": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+    "Denver Broncos": "https://a.espncdn.com/i/teamlogos/nfl/500/den.png",
+    "Detroit Lions": "https://a.espncdn.com/i/teamlogos/nfl/500/det.png",
+    "Green Bay Packers": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
+    "Houston Texans": "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png",
+    "Indianapolis Colts": "https://a.espncdn.com/i/teamlogos/nfl/500/ind.png",
+    "Jacksonville Jaguars": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+    "Kansas City Chiefs": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+    "Las Vegas Raiders": "https://a.espncdn.com/i/teamlogos/nfl/500/lv.png",
+    "Los Angeles Chargers": "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png",
+    "Los Angeles Rams": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
+    "Miami Dolphins": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+    "Minnesota Vikings": "https://a.espncdn.com/i/teamlogos/nfl/500/min.png",
+    "New England Patriots": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+    "New Orleans Saints": "https://a.espncdn.com/i/teamlogos/nfl/500/no.png",
+    "New York Giants": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+    "New York Jets": "https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png",
+    "Philadelphia Eagles": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+    "Pittsburgh Steelers": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
+    "San Francisco 49ers": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+    "Seattle Seahawks": "https://a.espncdn.com/i/teamlogos/nfl/500/sea.png",
+    "Tampa Bay Buccaneers": "https://a.espncdn.com/i/teamlogos/nfl/500/tb.png",
+    "Tennessee Titans": "https://a.espncdn.com/i/teamlogos/nfl/500/ten.png",
+    "Washington Commanders": "https://a.espncdn.com/i/teamlogos/nfl/500/was.png",
+}
+
+def get_team_logo(team_name):
+    if team_name in TEAM_LOGOS:
+        return TEAM_LOGOS[team_name]
+    for key, url in TEAM_LOGOS.items():
+        if team_name.lower() in key.lower() or key.lower() in team_name.lower():
+            return url
+    return "https://a.espncdn.com/i/teamlogos/nfl/500/nfl.png"
+
 # Query Supabase for the latest week loaded in the database
 def get_latest_synced_week():
     try:
@@ -119,38 +163,55 @@ with tab1:
             h_spread = game['tuesday_spread']
             a_spread = -h_spread
             
-            h_label = f"{game['home_team']} ({'+' if h_spread > 0 else ''}{h_spread})"
-            a_label = f"{game['away_team']} ({'+' if a_spread > 0 else ''}{a_spread})"
+            h_spread_str = f"{'+' if h_spread > 0 else ''}{h_spread}"
+            a_spread_str = f"{'+' if a_spread > 0 else ''}{a_spread}"
             
-            # Format time in Eastern Time
+            h_label = f"{game['home_team']} ({h_spread_str})"
+            a_label = f"{game['away_team']} ({a_spread_str})"
             time_str = kickoff_et.strftime('%a %I:%M %p %Z')
-            st.write(f"**{game['away_team']} @ {game['home_team']}** | Kickoff: {time_str}")
             
             saved_pick = user_existing_picks.get(game['id'])
 
-            if is_locked:
-                if saved_pick:
-                    st.warning(f"🔒 Locked (Game Started) — **Your Pick: {saved_pick}**")
-                    selected_picks[game['id']] = saved_pick
-                else:
-                    st.warning("🔒 Locked (Game Started — No Pick Submitted)")
-            else:
-                default_idx = 0
-                if saved_pick == game['away_team']:
-                    default_idx = 1
-                elif saved_pick == game['home_team']:
-                    default_idx = 2
+            # Compact horizontal row layout
+            c1, c2, c3, c4, c5, c6 = st.columns([0.6, 2.3, 3.4, 2.3, 0.6, 1.8])
 
-                choice = st.radio(
-                    f"Select pick for {game['away_team']} @ {game['home_team']}:",
-                    ["None", a_label, h_label],
-                    index=default_idx,
-                    key=f"pick_game_{game['id']}_{user_name}"
-                )
-                if choice != "None":
-                    picked_team = game['home_team'] if choice == h_label else game['away_team']
-                    selected_picks[game['id']] = picked_team
-            st.divider()
+            with c1:
+                st.image(get_team_logo(game['away_team']), width=36)
+            with c2:
+                st.markdown(f"**{game['away_team']}** `{a_spread_str}`")
+            with c3:
+                if is_locked:
+                    if saved_pick:
+                        st.warning(f"🔒 Pick: **{saved_pick}**")
+                        selected_picks[game['id']] = saved_pick
+                    else:
+                        st.caption("🔒 *Locked*")
+                else:
+                    default_idx = 0
+                    if saved_pick == game['away_team']:
+                        default_idx = 1
+                    elif saved_pick == game['home_team']:
+                        default_idx = 2
+
+                    choice = st.radio(
+                        f"Pick for game {game['id']}",
+                        ["None", a_label, h_label],
+                        index=default_idx,
+                        horizontal=True,
+                        label_visibility="collapsed",
+                        key=f"pick_game_{game['id']}_{user_name}"
+                    )
+                    if choice != "None":
+                        picked_team = game['home_team'] if choice == h_label else game['away_team']
+                        selected_picks[game['id']] = picked_team
+            with c4:
+                st.markdown(f"**{game['home_team']}** `{h_spread_str}`")
+            with c5:
+                st.image(get_team_logo(game['home_team']), width=36)
+            with c6:
+                st.caption(f"🕒 {time_str}")
+
+            st.markdown("<hr style='margin: 2px 0 10px 0; border: none; border-top: 1px solid #eee;'/>", unsafe_allow_html=True)
 
         if st.button("Submit / Update Picks", key="submit_picks_btn"):
             if not user_name:

@@ -129,40 +129,91 @@ with tab2:
 
     if picks_resp.data and not games_df.empty:
         picks_df = pd.DataFrame(picks_resp.data)
-        
-        scores = []
+        detailed_scores = []
+
         for _, row in picks_df.iterrows():
             game_match = games_df[games_df['id'] == row['game_id']]
             if not game_match.empty:
                 game = game_match.iloc[0]
                 picked = row['picked_team']
                 
+                # Retrieve scores (defaulting to 0 if null)
+                home_score = game.get('home_score') or 0
+                away_score = game.get('away_score') or 0
+                
+                # Determine team spread and score relative to user pick
                 if picked == game['home_team']:
-                    picked_score = game['home_score']
-                    opp_score = game['away_score']
+                    picked_score = home_score
+                    opp_score = away_score
                     spread = game['tuesday_spread']
                 else:
-                    picked_score = game['away_score']
-                    opp_score = game['home_score']
+                    picked_score = away_score
+                    opp_score = home_score
                     spread = -game['tuesday_spread']
-                    
-                pts = (picked_score - opp_score) + spread
-                scores.append({
+                
+                status = str(game.get('status', '')).lower()
+                has_started = status in ['in_progress', 'completed', 'closed', 'final', 'live'] or (home_score > 0 or away_score > 0)
+                
+                # Point calculation: (Picked Team Score - Opponent Score) + Tuesday Spread
+                pts = (picked_score - opp_score) + spread if has_started else 0.0
+                
+                detailed_scores.append({
                     "User": row['user_name'],
                     "Week": row['week'],
                     "Picked": picked,
-                    "Status": game['status'],
-                    "Margin Pts": pts
+                    "Status": status.capitalize() if status else "Scheduled",
+                    "Margin Pts": float(pts),
+                    "Has Started": has_started
                 })
             
-        if scores:
-            score_df = pd.DataFrame(scores)
-            leaderboard = score_df.groupby("User")["Margin Pts"].sum().reset_index()
-            leaderboard = leaderboard.sort_values(by="Margin Pts", ascending=False)
+        if detailed_scores:
+            score_df = pd.DataFrame(detailed_scores)
             
-            st.dataframe(leaderboard, use_container_width=True)
-            st.subheader("Detailed Breakdown")
-            st.dataframe(score_df, use_container_width=True)
+            # Aggregate pure total margin points per user
+            user_summary = []
+            for user, group in score_df.groupby("User"):
+                started_picks = group[group["Has Started"]]
+                total_margin = float(started_picks["Margin Pts"].sum()) if not started_picks.empty else 0.0
+                
+                user_summary.append({
+                    "User": user,
+                    "Total Margin Points": total_margin
+                })
+            
+            leaderboard = pd.DataFrame(user_summary)
+            leaderboard = leaderboard.sort_values(by="Total Margin Points", ascending=False).reset_index(drop=True)
+            
+            # 1-based Ranking index
+            leaderboard.index = leaderboard.index + 1
+            leaderboard = leaderboard.reset_index().rename(columns={"index": "Rank"})
+
+            st.subheader("🏆 Leaderboard")
+            st.dataframe(
+                leaderboard[["Rank", "User", "Total Margin Points"]],
+                column_config={
+                    "Total Margin Points": st.column_config.NumberColumn(
+                        "Total Margin Points",
+                        format="%+.1f",
+                        help="Sum of margin points won/lost across selected games."
+                    )
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            st.subheader("📋 Pick Breakdown")
+            display_breakdown = score_df[["User", "Week", "Picked", "Status", "Margin Pts"]].copy()
+            st.dataframe(
+                display_breakdown,
+                column_config={
+                    "Margin Pts": st.column_config.NumberColumn(
+                        "Margin Pts",
+                        format="%+.1f"
+                    )
+                },
+                hide_index=True,
+                use_container_width=True
+            )
         else:
             st.info("No matching game records found for picks.")
     else:

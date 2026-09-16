@@ -278,7 +278,7 @@ with tab1:
                 st.rerun()
 
 with tab2:
-    st.header("Live Scoreboard & Standings")
+    st.header("Season Standings & Live Scoreboard")
 
     picks_resp = supabase.table("picks").select("*").execute()
     games_data = supabase.table("games").select("*").execute().data
@@ -288,20 +288,22 @@ with tab2:
         games_df = pd.DataFrame(games_data)
         now_utc = datetime.now(timezone.utc)
 
-        # Standings Week Filter
+        # Select which week's picks cards to display on the leaderboard
         available_weeks = sorted(picks_df["week"].unique())
-        selected_lb_week = st.selectbox("Filter Standings by Week:", ["All Weeks"] + list(available_weeks), key="lb_week_select")
+        latest_lb_week = max(available_weeks) if available_weeks else 1
+        
+        selected_display_week = st.selectbox(
+            "Show Pick Cards For Week:", 
+            available_weeks, 
+            index=available_weeks.index(latest_lb_week),
+            key="lb_week_select"
+        )
 
-        if selected_lb_week != "All Weeks":
-            active_picks_df = picks_df[picks_df["week"] == selected_lb_week]
-        else:
-            active_picks_df = picks_df.copy()
-
-        # Build Contestant Cards Data
+        # Calculate Season Cumulative Totals for each contestant
         user_cards = []
-        for user_name_val, user_picks in active_picks_df.groupby("user_name"):
-            user_total_pts = 0.0
-            formatted_picks = []
+        for user_name_val, user_picks in picks_df.groupby("user_name"):
+            season_total_pts = 0.0
+            weekly_display_picks = []
 
             for _, pick_row in user_picks.iterrows():
                 game_match = games_df[games_df['id'] == pick_row['game_id']]
@@ -327,7 +329,9 @@ with tab2:
 
                     spread_str = f"{'+' if spread > 0 else ''}{spread}"
                     pts = (picked_score - opp_score) + spread if has_started else 0.0
-                    user_total_pts += pts
+                    
+                    # Accumulate score across ALL weeks
+                    season_total_pts += pts
 
                     if status in ['completed', 'closed', 'final']:
                         status_label = "Final"
@@ -336,47 +340,49 @@ with tab2:
                     else:
                         status_label = "Scheduled"
 
-                    if has_started:
-                        formatted_picks.append({
-                            "team": picked_team,
-                            "logo": get_team_logo(picked_team),
-                            "spread": spread_str,
-                            "pts": pts,
-                            "status": status_label,
-                            "has_started": True
-                        })
-                    else:
-                        formatted_picks.append({
-                            "team": "Hidden",
-                            "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/nfl.png",
-                            "spread": "--",
-                            "pts": 0.0,
-                            "status": "Scheduled",
-                            "has_started": False
-                        })
+                    # Collect picks matching the selected display week
+                    if pick_row['week'] == selected_display_week:
+                        if has_started:
+                            weekly_display_picks.append({
+                                "team": picked_team,
+                                "logo": get_team_logo(picked_team),
+                                "spread": spread_str,
+                                "pts": pts,
+                                "status": status_label,
+                                "has_started": True
+                            })
+                        else:
+                            weekly_display_picks.append({
+                                "team": "Hidden",
+                                "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/nfl.png",
+                                "spread": "--",
+                                "pts": 0.0,
+                                "status": "Scheduled",
+                                "has_started": False
+                            })
 
             user_cards.append({
                 "user": user_name_val,
-                "total_pts": user_total_pts,
-                "picks": formatted_picks
+                "season_pts": season_total_pts,
+                "picks": weekly_display_picks
             })
 
-        # Sort contestants descending by Total Margin Points
-        user_cards = sorted(user_cards, key=lambda x: x["total_pts"], reverse=True)
+        # Rank contestants by Cumulative Season Total Score (descending)
+        user_cards = sorted(user_cards, key=lambda x: x["season_pts"], reverse=True)
 
-        st.subheader("🏆 Contestant Standings")
+        st.subheader(f"🏆 Overall Season Standings (Picks shown for Week {selected_display_week})")
 
         # Render Horizontal Card per Contestant
         for rank, card in enumerate(user_cards, 1):
             with st.container(border=True):
                 cols = st.columns([2.2, 1.2, 1.2, 1.2, 1.2, 1.2], vertical_alignment="center")
 
-                # Left Column: Rank, Contestant Name, Total Score
+                # Left Column: Rank, Contestant Name, Cumulative Season Score
                 with cols[0]:
                     st.markdown(f"#### #{rank} {card['user']}")
-                    st.markdown(f"**Total Score:** `{card['total_pts']:+.1f} pts`")
+                    st.markdown(f"**Season Total:** `{card['season_pts']:+.1f} pts`")
 
-                # Right 5 Columns: Picked Team Cards
+                # Right 5 Columns: Picked Team Cards for the selected week
                 for i in range(5):
                     with cols[i + 1]:
                         if i < len(card["picks"]):

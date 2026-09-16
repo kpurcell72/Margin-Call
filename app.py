@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from supabase import create_client
 from fetch_nfl import fetch_and_store_tuesday_lines
 
@@ -16,6 +17,9 @@ def init_supabase():
     return create_client(url, key)
 
 supabase = init_supabase()
+
+# Define Eastern Time Zone
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 # Initialize active week in session state
 if "active_week" not in st.session_state:
@@ -56,8 +60,14 @@ with tab1:
         key="main_contest_week_input"
     )
 
-    # Fetch Games from Database
-    games_resp = supabase.table("games").select("*").eq("week", week).execute()
+    # Fetch Games from Database sorted chronologically by kickoff_time
+    games_resp = (
+        supabase.table("games")
+        .select("*")
+        .eq("week", week)
+        .order("kickoff_time", desc=False)
+        .execute()
+    )
     games = games_resp.data
 
     if not games:
@@ -68,8 +78,10 @@ with tab1:
         now_utc = datetime.now(timezone.utc)
 
         for game in games:
-            kickoff = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
-            is_locked = now_utc >= kickoff
+            # Parse kickoff time and convert to Eastern Time
+            kickoff_utc = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
+            kickoff_et = kickoff_utc.astimezone(EASTERN_TZ)
+            is_locked = now_utc >= kickoff_utc
             
             h_spread = game['tuesday_spread']
             a_spread = -h_spread
@@ -77,7 +89,9 @@ with tab1:
             h_label = f"{game['home_team']} ({'+' if h_spread > 0 else ''}{h_spread})"
             a_label = f"{game['away_team']} ({'+' if a_spread > 0 else ''}{a_spread})"
             
-            st.write(f"**{game['away_team']} @ {game['home_team']}** | Kickoff: {kickoff.strftime('%a %I:%M %p UTC')}")
+            # Format time in Eastern Time (e.g., Thu 08:15 PM EDT)
+            time_str = kickoff_et.strftime('%a %I:%M %p %Z')
+            st.write(f"**{game['away_team']} @ {game['home_team']}** | Kickoff: {time_str}")
             
             if is_locked:
                 st.warning("🔒 Locked (Game Started)")

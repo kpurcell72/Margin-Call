@@ -7,6 +7,19 @@ from fetch_nfl import fetch_and_store_tuesday_lines
 
 # Page Setup
 st.set_page_config(page_title="Margin Call NFL", layout="wide")
+
+# Custom CSS to center-align team pick cards in Leaderboard columns
+st.markdown("""
+    <style>
+    div[data-testid="column"] {
+        text-align: center;
+    }
+    div[data-testid="column"]:first-child {
+        text-align: left;
+    }
+    </style>
+""", unsafe_html=True)
+
 st.title("🏈 Margin Call NFL Contest")
 
 # Connect to Supabase
@@ -194,7 +207,6 @@ with tab1:
         now_utc = datetime.now(timezone.utc)
 
         for game in games:
-            # Parse kickoff time
             kickoff_utc = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
             kickoff_et = kickoff_utc.astimezone(EASTERN_TZ)
             is_locked = now_utc >= kickoff_utc
@@ -209,7 +221,6 @@ with tab1:
             # Single-line 7-column layout with center vertical alignment
             c1, c2, c3, c4, c5, c6, c7 = st.columns([0.4, 0.5, 2.6, 2.0, 2.6, 0.5, 0.4], vertical_alignment="center")
 
-            # Far-Left: Away Pick Box
             with c1:
                 st.checkbox(
                     "",
@@ -220,30 +231,24 @@ with tab1:
                     label_visibility="collapsed"
                 )
 
-            # Away Logo
             with c2:
                 st.image(get_team_logo(game['away_team']), width=28)
 
-            # Away Team Name & Spread
             with c3:
                 st.markdown(f"**{game['away_team']}** `{a_spread_str}`")
 
-            # Center: Kickoff Time / Lock Status
             with c4:
                 if is_locked:
                     st.caption(f"🔒 **Locked** ({time_str})")
                 else:
                     st.caption(f"🕒 {time_str}")
 
-            # Home Spread & Team Name
             with c5:
                 st.markdown(f"`{h_spread_str}` **{game['home_team']}**", unsafe_allow_html=True)
 
-            # Home Logo
             with c6:
                 st.image(get_team_logo(game['home_team']), width=28)
 
-            # Far-Right: Home Pick Box
             with c7:
                 st.checkbox(
                     "",
@@ -276,106 +281,119 @@ with tab2:
     st.header("Live Scoreboard & Standings")
 
     picks_resp = supabase.table("picks").select("*").execute()
-    games_df = pd.DataFrame(supabase.table("games").select("*").execute().data)
+    games_data = supabase.table("games").select("*").execute().data
 
-    if picks_resp.data and not games_df.empty:
+    if picks_resp.data and games_data:
         picks_df = pd.DataFrame(picks_resp.data)
-        detailed_scores = []
+        games_df = pd.DataFrame(games_data)
         now_utc = datetime.now(timezone.utc)
 
-        for _, row in picks_df.iterrows():
-            game_match = games_df[games_df['id'] == row['game_id']]
-            if not game_match.empty:
-                game = game_match.iloc[0]
-                picked = row['picked_team']
-                
-                # Check kickoff time vs current time
-                kickoff_utc = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
-                status = str(game.get('status', '')).lower()
-                has_started = now_utc >= kickoff_utc or status in ['in_progress', 'completed', 'closed', 'final', 'live']
-                
-                # Mask pick if game has not kicked off yet
-                display_pick = picked if has_started else "🔒 Hidden until Kickoff"
+        # Standings Week Filter
+        available_weeks = sorted(picks_df["week"].unique())
+        selected_lb_week = st.selectbox("Filter Standings by Week:", ["All Weeks"] + list(available_weeks), key="lb_week_select")
 
-                home_score = game.get('home_score') or 0
-                away_score = game.get('away_score') or 0
-                
-                if picked == game['home_team']:
-                    picked_score = home_score
-                    opp_score = away_score
-                    spread = game['tuesday_spread']
-                else:
-                    picked_score = away_score
-                    opp_score = home_score
-                    spread = -game['tuesday_spread']
-                
-                pts = (picked_score - opp_score) + spread if has_started else 0.0
-                
-                detailed_scores.append({
-                    "User": row['user_name'],
-                    "Week": row['week'],
-                    "Picked": display_pick,
-                    "Status": "Live / Final" if has_started else "Scheduled",
-                    "Margin Pts": float(pts),
-                    "Has Started": has_started
-                })
-            
-        if detailed_scores:
-            score_df = pd.DataFrame(detailed_scores)
-            
-            user_summary = []
-            for user, group in score_df.groupby("User"):
-                started_picks = group[group["Has Started"]]
-                total_margin = float(started_picks["Margin Pts"].sum()) if not started_picks.empty else 0.0
-                
-                user_summary.append({
-                    "User": user,
-                    "Total Margin Points": total_margin
-                })
-            
-            leaderboard = pd.DataFrame(user_summary)
-            leaderboard = leaderboard.sort_values(by="Total Margin Points", ascending=False).reset_index(drop=True)
-            
-            leaderboard.index = leaderboard.index + 1
-            leaderboard = leaderboard.reset_index().rename(columns={"index": "Rank"})
-
-            st.subheader("🏆 Leaderboard")
-            st.dataframe(
-                leaderboard[["Rank", "User", "Total Margin Points"]],
-                column_config={
-                    "Total Margin Points": st.column_config.NumberColumn(
-                        "Total Margin Points",
-                        format="%+.1f",
-                        help="Sum of margin points won/lost across selected games that have kicked off."
-                    )
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            st.subheader("📋 Pick Breakdown")
-            
-            # Filter breakdown by week
-            available_weeks = sorted(score_df["Week"].unique())
-            filter_week = st.selectbox("Filter Breakdown by Week:", ["All Weeks"] + list(available_weeks), key="lb_week_filter")
-            
-            if filter_week != "All Weeks":
-                display_breakdown = score_df[score_df["Week"] == filter_week][["User", "Week", "Picked", "Status", "Margin Pts"]].copy()
-            else:
-                display_breakdown = score_df[["User", "Week", "Picked", "Status", "Margin Pts"]].copy()
-
-            st.dataframe(
-                display_breakdown,
-                column_config={
-                    "Margin Pts": st.column_config.NumberColumn(
-                        "Margin Pts",
-                        format="%+.1f"
-                    )
-                },
-                hide_index=True,
-                use_container_width=True
-            )
+        if selected_lb_week != "All Weeks":
+            active_picks_df = picks_df[picks_df["week"] == selected_lb_week]
         else:
-            st.info("No matching game records found for picks.")
+            active_picks_df = picks_df.copy()
+
+        # Build Contestant Cards Data
+        user_cards = []
+        for user_name_val, user_picks in active_picks_df.groupby("user_name"):
+            user_total_pts = 0.0
+            formatted_picks = []
+
+            for _, pick_row in user_picks.iterrows():
+                game_match = games_df[games_df['id'] == pick_row['game_id']]
+                if not game_match.empty:
+                    game = game_match.iloc[0]
+                    picked_team = pick_row['picked_team']
+
+                    kickoff_utc = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
+                    status = str(game.get('status', '')).lower()
+                    has_started = now_utc >= kickoff_utc or status in ['in_progress', 'completed', 'closed', 'final', 'live']
+
+                    home_score = game.get('home_score') or 0
+                    away_score = game.get('away_score') or 0
+
+                    if picked_team == game['home_team']:
+                        picked_score = home_score
+                        opp_score = away_score
+                        spread = game['tuesday_spread']
+                    else:
+                        picked_score = away_score
+                        opp_score = home_score
+                        spread = -game['tuesday_spread']
+
+                    spread_str = f"{'+' if spread > 0 else ''}{spread}"
+                    pts = (picked_score - opp_score) + spread if has_started else 0.0
+                    user_total_pts += pts
+
+                    if status in ['completed', 'closed', 'final']:
+                        status_label = "Final"
+                    elif status in ['in_progress', 'live']:
+                        status_label = "Live"
+                    else:
+                        status_label = "Scheduled"
+
+                    if has_started:
+                        formatted_picks.append({
+                            "team": picked_team,
+                            "logo": get_team_logo(picked_team),
+                            "spread": spread_str,
+                            "pts": pts,
+                            "status": status_label,
+                            "has_started": True
+                        })
+                    else:
+                        formatted_picks.append({
+                            "team": "Hidden",
+                            "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/nfl.png",
+                            "spread": "--",
+                            "pts": 0.0,
+                            "status": "Scheduled",
+                            "has_started": False
+                        })
+
+            user_cards.append({
+                "user": user_name_val,
+                "total_pts": user_total_pts,
+                "picks": formatted_picks
+            })
+
+        # Sort contestants descending by Total Margin Points
+        user_cards = sorted(user_cards, key=lambda x: x["total_pts"], reverse=True)
+
+        st.subheader("🏆 Contestant Standings")
+
+        # Render Horizontal Card per Contestant
+        for rank, card in enumerate(user_cards, 1):
+            with st.container(border=True):
+                cols = st.columns([2.2, 1.2, 1.2, 1.2, 1.2, 1.2], vertical_alignment="center")
+
+                # Left Column: Rank, Contestant Name, Total Score
+                with cols[0]:
+                    st.markdown(f"#### #{rank} {card['user']}")
+                    st.markdown(f"**Total Score:** `{card['total_pts']:+.1f} pts`")
+
+                # Right 5 Columns: Picked Team Cards
+                for i in range(5):
+                    with cols[i + 1]:
+                        if i < len(card["picks"]):
+                            p = card["picks"][i]
+                            if p["has_started"]:
+                                st.image(p["logo"], width=34)
+                                st.markdown(f"**{p['team']}** `{p['spread']}`")
+                                
+                                pts = p["pts"]
+                                color = "green" if pts > 0 else ("red" if pts < 0 else "gray")
+                                st.markdown(f":{color}[**{pts:+.1f} pts**]")
+                                st.caption(f"{p['status']}")
+                            else:
+                                st.markdown("🔒")
+                                st.markdown("**Hidden**")
+                                st.caption("Until Kickoff")
+                        else:
+                            st.caption("No Pick")
     else:
         st.info("No picks or game scores to display yet.")

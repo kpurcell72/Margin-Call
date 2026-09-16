@@ -80,6 +80,21 @@ latest_week = get_latest_synced_week()
 if "active_week" not in st.session_state:
     st.session_state.active_week = latest_week
 
+# Callback handlers for pick selection
+def on_pick_away(game_id, away_team):
+    if st.session_state.get(f"cb_away_{game_id}"):
+        st.session_state[f"pick_{game_id}"] = away_team
+        st.session_state[f"cb_home_{game_id}"] = False
+    else:
+        st.session_state[f"pick_{game_id}"] = None
+
+def on_pick_home(game_id, home_team):
+    if st.session_state.get(f"cb_home_{game_id}"):
+        st.session_state[f"pick_{game_id}"] = home_team
+        st.session_state[f"cb_away_{game_id}"] = False
+    else:
+        st.session_state[f"pick_{game_id}"] = None
+
 # Password-Protected Admin Sync Controls in Sidebar
 with st.sidebar:
     st.header("⚙️ Admin Controls")
@@ -113,17 +128,20 @@ tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])
 
 with tab1:
     st.header("Weekly Picks Selection")
-    user_name = st.text_input("Enter Your Name / Identifier:", key="user_name_input").strip()
     
-    week = st.number_input(
-        "Select Contest Week:", 
-        min_value=1, 
-        max_value=18, 
-        value=latest_week,
-        key="main_contest_week_input"
-    )
+    c_user, c_week = st.columns([3, 1])
+    with c_user:
+        user_name = st.text_input("Enter Your Name / Identifier:", key="user_name_input").strip()
+    with c_week:
+        week = st.number_input(
+            "Contest Week:", 
+            min_value=1, 
+            max_value=18, 
+            value=latest_week,
+            key="main_contest_week_input"
+        )
 
-    # Fetch existing picks for this user & week if user_name is entered
+    # Load existing picks from database when user_name or week changes
     user_existing_picks = {}
     if user_name:
         existing_resp = (
@@ -135,9 +153,24 @@ with tab1:
         )
         if existing_resp.data:
             user_existing_picks = {p["game_id"]: p["picked_team"] for p in existing_resp.data}
-            st.info(f"Loaded existing picks for **{user_name}** (Week {week}). You can update unlocked picks below.")
 
-    # Fetch Games from Database sorted chronologically
+    # Sync user picks to session state if state key updated
+    state_key = f"loaded_{user_name}_{week}"
+    if st.session_state.get("current_loaded_key") != state_key:
+        st.session_state["current_loaded_key"] = state_key
+        games_for_state = (
+            supabase.table("games")
+            .select("id, away_team, home_team")
+            .eq("week", week)
+            .execute().data or []
+        )
+        for g in games_for_state:
+            saved = user_existing_picks.get(g['id'])
+            st.session_state[f"pick_{g['id']}"] = saved
+            st.session_state[f"cb_away_{g['id']}"] = (saved == g['away_team'])
+            st.session_state[f"cb_home_{g['id']}"] = (saved == g['home_team'])
+
+    # Fetch Games sorted chronologically
     games_resp = (
         supabase.table("games")
         .select("*")
@@ -150,12 +183,18 @@ with tab1:
     if not games:
         st.info(f"No games loaded yet for Week {week}. Use the Admin Controls in the sidebar to sync games.")
     else:
-        st.subheader("Pick 5 Games (Each game locks at kickoff)")
-        selected_picks = {}
+        # Calculate selected pick count
+        selected_picks = {
+            g['id']: st.session_state.get(f"pick_{g['id']}")
+            for g in games
+            if st.session_state.get(f"pick_{g['id']}")
+        }
+
+        st.markdown(f"### Select 5 Games `({len(selected_picks)} / 5 Selected)`")
         now_utc = datetime.now(timezone.utc)
 
         for game in games:
-            # Parse kickoff time and convert to Eastern Time
+            # Parse kickoff time
             kickoff_utc = datetime.fromisoformat(game['kickoff_time'].replace('Z', '+00:00'))
             kickoff_et = kickoff_utc.astimezone(EASTERN_TZ)
             is_locked = now_utc >= kickoff_utc
@@ -165,55 +204,59 @@ with tab1:
             
             h_spread_str = f"{'+' if h_spread > 0 else ''}{h_spread}"
             a_spread_str = f"{'+' if a_spread > 0 else ''}{a_spread}"
-            
-            h_label = f"{game['home_team']} ({h_spread_str})"
-            a_label = f"{game['away_team']} ({a_spread_str})"
-            time_str = kickoff_et.strftime('%a %I:%M %p %Z')
-            
-            saved_pick = user_existing_picks.get(game['id'])
+            time_str = kickoff_et.strftime('%a %I:%M %p ET')
 
-            # Compact horizontal row layout
-            c1, c2, c3, c4, c5, c6 = st.columns([0.6, 2.3, 3.4, 2.3, 0.6, 1.8])
+            # Single-line 7-column layout with center vertical alignment
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([0.4, 0.5, 2.6, 2.0, 2.6, 0.5, 0.4], vertical_alignment="center")
 
+            # Far-Left: Away Pick Box
             with c1:
-                st.image(get_team_logo(game['away_team']), width=36)
+                st.checkbox(
+                    "",
+                    key=f"cb_away_{game['id']}",
+                    disabled=is_locked,
+                    on_change=on_pick_away,
+                    args=(game['id'], game['away_team']),
+                    label_visibility="collapsed"
+                )
+
+            # Away Logo
             with c2:
-                st.markdown(f"**{game['away_team']}** `{a_spread_str}`")
+                st.image(get_team_logo(game['away_team']), width=28)
+
+            # Away Team Name & Spread
             with c3:
-                if is_locked:
-                    if saved_pick:
-                        st.warning(f"🔒 Pick: **{saved_pick}**")
-                        selected_picks[game['id']] = saved_pick
-                    else:
-                        st.caption("🔒 *Locked*")
-                else:
-                    default_idx = 0
-                    if saved_pick == game['away_team']:
-                        default_idx = 1
-                    elif saved_pick == game['home_team']:
-                        default_idx = 2
+                st.markdown(f"**{game['away_team']}** `{a_spread_str}`")
 
-                    choice = st.radio(
-                        f"Pick for game {game['id']}",
-                        ["None", a_label, h_label],
-                        index=default_idx,
-                        horizontal=True,
-                        label_visibility="collapsed",
-                        key=f"pick_game_{game['id']}_{user_name}"
-                    )
-                    if choice != "None":
-                        picked_team = game['home_team'] if choice == h_label else game['away_team']
-                        selected_picks[game['id']] = picked_team
+            # Center: Kickoff Time / Lock Status
             with c4:
-                st.markdown(f"**{game['home_team']}** `{h_spread_str}`")
+                if is_locked:
+                    st.caption(f"🔒 **Locked** ({time_str})")
+                else:
+                    st.caption(f"🕒 {time_str}")
+
+            # Home Spread & Team Name
             with c5:
-                st.image(get_team_logo(game['home_team']), width=36)
+                st.markdown(f"`{h_spread_str}` **{game['home_team']}**", unsafe_allow_html=True)
+
+            # Home Logo
             with c6:
-                st.caption(f"🕒 {time_str}")
+                st.image(get_team_logo(game['home_team']), width=28)
 
-            st.markdown("<hr style='margin: 2px 0 10px 0; border: none; border-top: 1px solid #eee;'/>", unsafe_allow_html=True)
+            # Far-Right: Home Pick Box
+            with c7:
+                st.checkbox(
+                    "",
+                    key=f"cb_home_{game['id']}",
+                    disabled=is_locked,
+                    on_change=on_pick_home,
+                    args=(game['id'], game['home_team']),
+                    label_visibility="collapsed"
+                )
 
-        if st.button("Submit / Update Picks", key="submit_picks_btn"):
+            st.markdown("<hr style='margin: 0px 0 6px 0; border: none; border-top: 1px solid #e6e6e6;'/>", unsafe_allow_html=True)
+
+        if st.button("Submit / Update Picks", key="submit_picks_btn", type="primary"):
             if not user_name:
                 st.error("Please enter your name / identifier before submitting.")
             elif len(selected_picks) != 5:
@@ -226,7 +269,7 @@ with tab1:
                         "game_id": game_id,
                         "picked_team": team
                     }).execute()
-                st.success("Your picks have been successfully updated!")
+                st.success("Your picks have been successfully saved!")
                 st.rerun()
 
 with tab2:

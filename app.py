@@ -50,7 +50,7 @@ tab1, tab2 = st.tabs(["📌 Make Picks", "🏆 Live Leaderboard"])
 
 with tab1:
     st.header("Weekly Picks Selection")
-    user_name = st.text_input("Enter Your Name / Identifier:", key="user_name_input")
+    user_name = st.text_input("Enter Your Name / Identifier:", key="user_name_input").strip()
     
     week = st.number_input(
         "Select Contest Week:", 
@@ -60,7 +60,21 @@ with tab1:
         key="main_contest_week_input"
     )
 
-    # Fetch Games from Database sorted chronologically by kickoff_time
+    # Fetch existing picks for this user & week if user_name is entered
+    user_existing_picks = {}
+    if user_name:
+        existing_resp = (
+            supabase.table("picks")
+            .select("*")
+            .eq("user_name", user_name)
+            .eq("week", week)
+            .execute()
+        )
+        if existing_resp.data:
+            user_existing_picks = {p["game_id"]: p["picked_team"] for p in existing_resp.data}
+            st.info(f"Loaded existing picks for **{user_name}** (Week {week}). You can update unlocked picks below.")
+
+    # Fetch Games from Database sorted chronologically
     games_resp = (
         supabase.table("games")
         .select("*")
@@ -89,28 +103,43 @@ with tab1:
             h_label = f"{game['home_team']} ({'+' if h_spread > 0 else ''}{h_spread})"
             a_label = f"{game['away_team']} ({'+' if a_spread > 0 else ''}{a_spread})"
             
-            # Format time in Eastern Time (e.g., Thu 08:15 PM EDT)
+            # Format time in Eastern Time
             time_str = kickoff_et.strftime('%a %I:%M %p %Z')
             st.write(f"**{game['away_team']} @ {game['home_team']}** | Kickoff: {time_str}")
             
+            saved_pick = user_existing_picks.get(game['id'])
+
             if is_locked:
-                st.warning("🔒 Locked (Game Started)")
+                if saved_pick:
+                    st.warning(f"🔒 Locked (Game Started) — **Your Pick: {saved_pick}**")
+                    # Preserve locked pick in submission batch
+                    selected_picks[game['id']] = saved_pick
+                else:
+                    st.warning("🔒 Locked (Game Started — No Pick Submitted)")
             else:
+                # Determine default radio selection index based on existing pick
+                default_idx = 0
+                if saved_pick == game['away_team']:
+                    default_idx = 1
+                elif saved_pick == game['home_team']:
+                    default_idx = 2
+
                 choice = st.radio(
                     f"Select pick for {game['away_team']} @ {game['home_team']}:",
                     ["None", a_label, h_label],
-                    key=f"pick_game_{game['id']}"
+                    index=default_idx,
+                    key=f"pick_game_{game['id']}_{user_name}"
                 )
                 if choice != "None":
                     picked_team = game['home_team'] if choice == h_label else game['away_team']
                     selected_picks[game['id']] = picked_team
             st.divider()
 
-        if st.button("Submit Picks", key="submit_picks_btn"):
+        if st.button("Submit / Update Picks", key="submit_picks_btn"):
             if not user_name:
-                st.error("Please enter your name.")
+                st.error("Please enter your name / identifier before submitting.")
             elif len(selected_picks) != 5:
-                st.error(f"You must select exactly 5 picks. You currently selected {len(selected_picks)}.")
+                st.error(f"You must select exactly 5 picks. You currently have {len(selected_picks)} selected.")
             else:
                 for game_id, team in selected_picks.items():
                     supabase.table("picks").upsert({
@@ -119,7 +148,8 @@ with tab1:
                         "game_id": game_id,
                         "picked_team": team
                     }).execute()
-                st.success("Your picks have been successfully submitted!")
+                st.success("Your picks have been successfully updated!")
+                st.rerun()
 
 with tab2:
     st.header("Live Scoreboard & Standings")
